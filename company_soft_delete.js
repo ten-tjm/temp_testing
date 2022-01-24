@@ -1,39 +1,53 @@
+//DO NOT RUN THIS AS IS
+
+
 /* 	@author Tyler J. Mitchell
 * 	@version 0.1
 *	@description This produces a set of SQL queries to run when soft deleting an account. 
 *	@notes/questions 
-1) Should this reassign trackers to the Tenna inventory, or should that be done later, once we get the trackers back?
-2) Currently forces the person that will run this to manually lookup the account id, rather than pulling it from the database, is this the prefered behavior?
-3) Uses timestamps as an "undelete" method, this is not perfect, but should work without an issue. It would be better to have a "delete" id, that could be referenced instead
-this would allow for better record keeping (this account was deleted at time and date X, and then undeleted later) with the current method we lose this information
-4) There are several tables with data that is associated with an account, but those tables lack a deleted_at column, as such they have been ignored for this work
-	(	account_calendars account_integrations account_licenses account_modules account_user_roles agreement_signs asset_properties_audit asset_rental_history 
-asset_request_conflicts asset_revisions asset_utilization_lifetime asset_utilization_monthly asset_utilization_quarterly
-asset_utilization_weekly asset_utilization_yearly asset_work_hours_weekly audits bulkupload_items bulkuploads consumable_asset_transactions 
-contact_organization_associations geofence_alerts permissions role_permissions roles site_contacts sites spatial_ref_sys titles
-user_filters usergroups utilization_asset_life_to_date_start utilization_asset_site_assignments utilization_daily_total_duration utilization_processed_trips
-	)
-5) There are several tables with delted_at columns, but no data has ever been deleted from these tables, they have also been ignored. 
-	(	addresses aemp_fault_codes aemp_issues asset_request_decisions geofence_breaches insights_data tracker_allocation_orders
-tracker_events tracker_problems trip_events trip_stats user_settings 
-	)
+		1) Should this reassign trackers to the Tenna inventory, or should that be done later, once we get the trackers back?
+		2) Currently forces the person that will run this to manually lookup the account id, rather than pulling it from the database, is this the prefered behavior?
+		3) Uses timestamps as an "undelete" method, this is not perfect, but should work without an issue. It would be better to have a "delete" id, that could be referenced instead
+			this would allow for better record keeping (this account was deleted at time and date X, and then undeleted later) with the current method we lose this information
+		4) There are several tables with data that is associated with an account, but those tables lack a deleted_at column, as such they have been ignored for this work
+			(	account_calendars account_integrations account_licenses account_modules account_user_roles agreement_signs asset_properties_audit asset_rental_history 
+				asset_request_conflicts asset_revisions asset_utilization_lifetime asset_utilization_monthly asset_utilization_quarterly
+				asset_utilization_weekly asset_utilization_yearly asset_work_hours_weekly audits bulkupload_items bulkuploads consumable_asset_transactions 
+				contact_organization_associations geofence_alerts permissions role_permissions roles site_contacts sites spatial_ref_sys titles
+				user_filters usergroups utilization_asset_life_to_date_start utilization_asset_site_assignments utilization_daily_total_duration utilization_processed_trips
+			)
+		5) There are several tables with delted_at columns, but no data has ever been deleted from these tables, they have also been ignored. 
+			(	addresses aemp_fault_codes aemp_issues asset_request_decisions geofence_breaches insights_data tracker_allocation_orders
+				tracker_events tracker_problems trip_events trip_stats user_settings 
+			)
+		6) This should not be run as is, I need to double check the status of the trackers (if they have any) for each of these accounts, 
+			and make sure we are either removing them, or assigning them back to TENNA
 */
+
+
 
 "use strict";
 const config = require("../config")[process.env.NODE_ENV];
 const { runRawQueriesT } = require("@tenna-llc/be-shared-utils");
 
+const info = {
+  name: "Account Soft Deletes",
+  created: "2022-1-24",
+  comment:
+    "Soft deleting accounts, from production."
+};
+
 // Look up the name to get the ID, if there is a typo in the name, this will help find it
-//the Toro Company, 227c2c85-5c06-4331-bc8b-a5bd79854515
-//	JR Cruz Demo, 	e8f4fac4-773b-4010-bcb5-e218a2cb22b4
-//	Southwestern Energy Services, 	303c4cb3-e9ff-44b9-b13f-e086552e3e27
+//	The Toro Company, 227c2c85-5c06-4331-bc8b-a5bd79854515
+//	JR Cruz Demo, e8f4fac4-773b-4010-bcb5-e218a2cb22b4
+//	Southwestern Energy Services, 303c4cb3-e9ff-44b9-b13f-e086552e3e27
 //	Jobsite Technologies Inc., 02f36790-9ea5-458f-8f54-66a6efbc6e54
 //	Empire Paving Inc, fb3b507b-82ae-4406-bae5-f7fec5b633c9
-//	Garrity Asphalt Reclaiming, 	b8cfb663-4a1a-49c3-ae03-eedd3d71bfac
-//tEST COMPANY - SF, 62b98e44-fc0b-469c-aec4-11b1ddf4e9c4
-//tiger Construction, 	4312cc61-feda-4cf9-8a17-7d8daef9acf0
-//	Pace Analytical ( Pace Labs ), 	af337faf-5b0c-4666-930e-88148ccb9030
-//taracon Precast, a161693e-2004-4eca-9e7b-b7167f047136
+//	Garrity Asphalt Reclaiming, b8cfb663-4a1a-49c3-ae03-eedd3d71bfac
+//	TEST COMPANY - SF, 62b98e44-fc0b-469c-aec4-11b1ddf4e9c4
+//	Tiger Construction, 4312cc61-feda-4cf9-8a17-7d8daef9acf0
+//	Pace Analytical ( Pace Labs ), af337faf-5b0c-4666-930e-88148ccb9030
+//	Taracon Precast, a161693e-2004-4eca-9e7b-b7167f047136
 //	American Leak Detection, 0d91b229-6663-4cac-9460-5dbb5da404d3
 //	Brighton Builders, 569bea02-9e36-485c-bbd0-35f303a34657
 //	Stellos Electric, 8d86b143-d3c5-484a-8a86-408cb737ae74
@@ -51,7 +65,7 @@ const unDeleteTime = 1643034569760;
 * 3) Set the account to deleted
 * 4) Set their users to deleted
 * 
-* Limit the update to only things that are not already deleted. i.e. don't update an already deleted entry, this would make undelete more complicated
+* Limit the update to only things that are not already deleted. i.e. don't update an already deleted entry, this would make undelete more complicated/impossible
 */
 const getMinDeleteCommand = ({ accountID }) =>
 `
